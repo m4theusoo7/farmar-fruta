@@ -1,0 +1,260 @@
+--[[
+	====================================================================
+	   Fruit Sniper / Server Hopper
+	   Blox Fruits — Script de Automação e Otimização de Farm
+	====================================================================
+
+	OBJETIVO:
+	  - Escanear automaticamente o servidor atual procurando por frutas
+	    do tipo "Mythical" (Míticas) que tenham spawnado no mapa.
+	  - Se encontrar, coletar (teletransportar o jogador até a fruta).
+	  - Se não encontrar nenhuma fruta mítica após o escaneamento,
+	    realizar um "Server Hop" para outro servidor público com vagas.
+
+	ESTRUTURA DO FLUXO:
+	  1. Detecção de Frutas  -> Workspace -> Model com "Fruit" -> Raridade Mythical
+	  2. Ação de Coleta      -> TweenService -> HumanoidRootPart -> PrimaryPart
+	  3. Server Hop           -> HttpService -> API de servidores -> TeleportService
+	  4. Loop Contínuo        -> Escaneio -> Coleta | Escaneio -> Hop
+	====================================================================
+]]
+
+-- // 1. SERVIÇOS DO JOGO (com obtenção segura dos serviços)
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+
+-- O script deve rodar para o jogador local (LocalScript) para detectar
+-- frutas client-side e controlar o tween do personagem.
+local player = Players.LocalPlayer
+local placeId = game.PlaceId
+
+-- // 2. CONFIGURAÇÕES (altere conforme a necessidade do farm)
+local CONFIG = {
+	FRUIT_KEYWORD = "Fruit",  -- substring usada no nome da fruta (ex: "Dragon Fruit")
+	SCAN_TIMEOUT = 5,          -- segundos sem fruta mítica -> dispara o Server Hop
+	TWEEN_TIME = 2,            -- duração do tween (evita teleport brusco / anti-cheat)
+	COLLECT_SETTLE_TIME = 2,  -- tempo (seg) aguarda a coleta ser registrada no servidor
+	SERVER_LIMIT = 100,        -- limite máximo de servidores retornados pela API
+}
+
+-- // 3. LISTA DE FRUTAS MÍTICAS (Mythical) — apenas estas são alvo do farm
+--     Frutas comuns, incomuns, raras e lendárias ficam de fora da lista.
+local MYTHICAL_FRUITS = {
+	"leopard",   -- Leopardo
+	"dragon",    -- Dragão
+	"kitsune",   -- Kitsune
+	"spirit",    -- Espírito
+	"venom",     -- Veneno
+	"dough",     -- Massa (Dough)
+	"shadow",    -- Sombra
+	"gravity",   -- Gravidade
+	"mammoth",   -- Mamute
+	"trex",      -- T-Rex
+}
+
+-- // 4. FUNÇÕES AUXILIARES DE DETECÇÃO DE FRUTA
+
+-- Normaliza o nome da fruta: minúsculas, sem espaços e sem o sufixo "Fruit".
+-- Exemplo: "Dragon Fruit" -> "dragon"
+local function normalizeFruitName(name: string): string
+	local normalized = string.lower(name or "")
+	normalized = string.gsub(normalized, "%s", "")
+	normalized = string.gsub(normalized, "fruit", "")
+	return normalized
+end
+
+-- Verifica se a fruta informada pertence ao tipo "Mythical"
+local function isMythicalFruit(name: string): boolean
+	local normalized = normalizeFruitName(name)
+	for _, mythical in ipairs(MYTHICAL_FRUITS) do
+		if normalized == mythical then
+			return true
+		end
+	end
+	return false
+end
+
+-- Varredura completa do Workspace procurando por frutas Míticas caídas
+local function findMythicalFruit(): Instance?
+	local descendants = Workspace:GetDescendants()
+	for _, instance in ipairs(descendants) do
+		-- Garante que é um Model e que o nome contém a keyword "Fruit"
+		if instance:IsA("Model") and instance.Name:find(CONFIG.FRUIT_KEYWORD, 1, true) then
+			if isMythicalFruit(instance.Name) then
+				return instance
+			end
+		end
+	end
+	return nil
+end
+
+-- Localiza a posição (Vector3) da fruta no mapa
+local function getFruitPosition(fruit: Instance): Vector3?
+	if not fruit:IsA("Model") then
+		return nil
+	end
+	local primaryPart = fruit.PrimaryPart
+	if not primaryPart then
+		-- Fallback: pega a primeira parte física encontrada no modelo
+		local children = fruit:GetChildren()
+		for _, child in ipairs(children) do
+			if child:IsA("BasePart") then
+				primaryPart = child
+				break
+			end
+		end
+	end
+	if not primaryPart then
+		return nil
+	end
+	return primaryPart.Position
+end
+
+-- // 5. AÇÃO DE COLETA (AUTO-COLLECT / TWEEN)
+
+-- Move o Character do jogador até a posição da fruta usando TweenService,
+-- com easing suave para evitar detecção de teleportação brusca (anti-cheat).
+local function movePlayerToPosition(targetPosition: Vector3): boolean
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not rootPart or not humanoid then
+		return false
+	end
+
+	local tweenInfo = TweenInfo.new(
+		CONFIG.TWEEN_TIME,                    -- tempo do tween
+		Enum.EasingStyle.Quint,              -- easing suave
+		Enum.EasingDirection.Out,            -- direção de easing
+		0,                                  -- repeats
+		false,                              -- reverses
+		0                                   -- delayTime
+	)
+
+	local success, tween = pcall(function()
+		return TweenService:Create(rootPart, tweenInfo, { CFrame = CFrame.new(targetPosition) })
+	end)
+
+	-- Se o tween falhar, usa o MoveTo como fallback seguro
+	if not success or type(tween) ~= "Tween" then
+		humanoid:MoveTo(targetPosition)
+		return false
+	end
+
+	tween:Play()
+	tween.Completed:Wait() -- aguarda o tween terminar antes de liberar o controle
+
+	return true
+end
+
+-- // 6. SISTEMA DE SERVER HOP OTIMIZADO
+
+-- Histórico de servidores já visitados (evita repetir o mesmo server hop)
+local visitedServers: { [number]: boolean } = {}
+
+local function markServerVisited(serverId: number): boolean
+	if visitedServers[serverId] then
+		return false -- já estava na lista de visitados
+	end
+	visitedServers[serverId] = true
+	return true
+end
+
+-- Busca no histórico se o servidor já foi visitado
+local function isServerVisited(serverId: number): boolean
+	return visitedServers[serverId] == true
+end
+
+-- Consulta a API pública de servidores do jogo para obter servidores com vagas
+local function getAvailableServer(): number?
+	local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) ..
+		"/servers?limit=" .. tostring(CONFIG.SERVER_LIMIT)
+
+	local ok, response = pcall(function()
+		return HttpService:GetAsync(url)
+	end)
+
+	if not ok or type(response) ~= "string" then
+		warn("Fruit Sniper: falha ao buscar servidores públicos (HttpService).")
+		return nil
+	end
+
+	local okJson, body = pcall(function()
+		return HttpService:JSONDecode(response)
+	end)
+
+	if not okJson or type(body) ~= "table" then
+		warn("Fruit Sniper: resposta inválida da API de servidores.")
+		return nil
+	end
+
+	local servers = body.data
+	if type(servers) ~= "table" then
+		return nil
+	end
+
+	-- Percorre a lista e escolhe o primeiro servidor com vaga disponível
+	-- que ainda não tenha sido visitado pelo script.
+	for _, server in ipairs(servers) do
+		if type(server) == "table" then
+			local serverId = server.id
+			local playingCount = server.playingCount or 0
+			local maxPlayers = server.maxPlayers or 100
+
+			if playingCount < maxPlayers and not isServerVisited(serverId) then
+				markServerVisited(serverId)
+				return serverId
+			end
+		end
+	end
+
+	return nil
+end
+
+-- Teletransporta o jogador para o servidor escolhido
+local function teleportToServer(serverId: number): boolean
+	local success, err = pcall(function()
+		return TeleportService:TeleportAsync(placeId, player, serverId)
+	end)
+
+	if not success then
+		-- Remove da lista para permitir uma nova tentativa em outra iteração
+		visitedServers[serverId] = nil
+		warn("Fruit Sniper: falha ao teleportar para o servidor " .. tostring(serverId) .. " -> " .. tostring(err))
+		return false
+	end
+
+	return true
+end
+
+-- // 7. LOOP PRINCIPAL (ESCANEAMENTO -> COLETA | SERVER HOP)
+
+while true do
+	-- Passo 1: Escanear o mapa em busca de fruta mítica
+	local mythicalFruit = findMythicalFruit()
+
+	if mythicalFruit then
+		-- Passo 2: Fruta mítica encontrada -> ir até ela e coletar
+		local fruitPosition = getFruitPosition(mythicalFruit)
+		if fruitPosition then
+			movePlayerToPosition(fruitPosition)
+		end
+		task.wait(CONFIG.COLLECT_SETTLE_TIME) -- aguarda a coleta acontecer no servidor
+	else
+		-- Passo 3: Nenhuma fruta mítica encontrada -> esperar o timeout e fazer Server Hop
+		task.wait(CONFIG.SCAN_TIMEOUT)
+
+		local nextServerId = getAvailableServer()
+		if nextServerId then
+			teleportToServer(nextServerId)
+		else
+			task.wait(10) -- sem servidor disponível no momento -> tenta novamente depois
+		end
+	end
+end
