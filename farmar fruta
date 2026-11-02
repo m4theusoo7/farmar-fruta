@@ -197,3 +197,24 @@ while task.wait(1) do
 	if mythicalFruit then
 		local fruitPosition = getFruitPosition(mythicalFruit)
 		if fruitPosition then
+			print("Fruit Sniper: Indo coletar a fruta...")
+			movePlayerToPosition(fruitPosition)
+			task.wait(CONFIG.COLLECT_SETTLE_TIME)
+		end
+	else
+		print("Fruit Sniper: Nenhuma fruta mítica no mapa. Iniciando Server Hop em " .. CONFIG.SCAN_TIMEOUT .. "s...")
+		task.wait(CONFIG.SCAN_TIMEOUT)
+
+		local nextServerId = getAvailableServer()
+		if nextServerId then
+			teleportToServer(nextServerId)
+			task.wait(10) -- Aguarda o teleporte iniciar antes de tentar novamente
+		else
+			print("Fruit Sniper: Nenhum servidor novo encontrado. Limpando lista de servidores e tentando novamente...")
+			-- Se esgotar os servidores, limpa a lista e recomeça
+			visitedServers = {}
+			saveServers()
+			task.wait(5)
+		end
+	end
+end
