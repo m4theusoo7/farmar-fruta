@@ -31,7 +31,10 @@ local TeleportService = game:GetService("TeleportService")
 local player = Players.LocalPlayer
 local placeId = game.PlaceId
 
-print("Fruit Sniper: script iniciado | PlaceId: " .. tostring(placeId))
+-- Mensagem de inicialização do script
+print("████ FRUIT SNIPER INICIADO █████")
+print("Blox Fruits | Farm de Frutas Míticas | PlaceId: " .. tostring(placeId))
+print("Fruit Sniper: sistema de farm ativado.")
 
 -- // 2. CONFIGURAÇÕES (altere conforme a necessidade do farm)
 local CONFIG = {
