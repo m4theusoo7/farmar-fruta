@@ -135,12 +135,13 @@ local function getAvailableServer(): number?
 	local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) ..
 		"/servers?limit=" .. tostring(CONFIG.SERVER_LIMIT)
 
+	print("Fruit Sniper: buscando servidores publicos...")
 	local ok, response = pcall(function()
 		return HttpService:GetAsync(url)
 	end)
 
 	if not ok or type(response) ~= "string" then
-		warn("Fruit Sniper: falha ao buscar servidores públicos (HttpService).")
+		warn("Fruit Sniper: falha ao buscar servidores publicos.")
 		return nil
 	end
 
@@ -149,7 +150,7 @@ local function getAvailableServer(): number?
 	end)
 
 	if not okJson or type(body) ~= "table" then
-		warn("Fruit Sniper: resposta inválida da API de servidores.")
+		warn("Fruit Sniper: resposta invalida da API de servidores.")
 		return nil
 	end
 
@@ -181,7 +182,7 @@ local function teleportToServer(serverId: number): boolean
 
 	if not success then
 		visitedServers[serverId] = nil
-		warn("Fruit Sniper: falha ao teleportar para o servidor " .. tostring(serverId) .. " -> " .. tostring(err))
+		warn("Fruit Sniper: falha ao teleportar -> " .. tostring(err))
 		return false
 	end
 
@@ -198,11 +199,13 @@ while true do
 		end
 		task.wait(CONFIG.COLLECT_SETTLE_TIME)
 	else
-		print("Fruit Sniper: nenhuma fruta mítica encontrada. Aguardando " .. CONFIG.SCAN_TIMEOUT .. "s...")
+		print("NENHUMA FRUTA MITICA ENCONTRADA - PRONTO PARA SERVER HOP")
+
 		task.wait(CONFIG.SCAN_TIMEOUT)
 
 		local nextServerId = getAvailableServer()
 		if nextServerId then
+			print("Fruit Sniper: teleportando para o servidor " .. tostring(nextServerId))
 			teleportToServer(nextServerId)
 		else
 			task.wait(10)
